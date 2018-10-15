@@ -1,11 +1,5 @@
-local singletons = require "kong.singletons"
-local responses = require "kong.tools.responses"
 local find = string.find
 local select = select
-local ERR = ngx.ERR
-local WARN = ngx.WARN
-local ngx_log = ngx.log
-
 
 local DEFAULT_BUCKETS = { 1, 2, 5, 7, 10, 15, 20, 25, 30, 40, 50, 60, 70,
                           80, 90, 100, 200, 300, 400, 500, 1000,
@@ -17,7 +11,7 @@ local prometheus
 local function init()
   local shm = "prometheus_metrics"
   if not ngx.shared.prometheus_metrics then
-    ngx_log(ERR, "prometheus: ngx shared dict 'prometheus_metrics' not found")
+    kong.log.err("prometheus: ngx shared dict 'prometheus_metrics' not found")
     return
   end
 
@@ -46,9 +40,9 @@ end
 
 local function log(message)
   if not metrics then
-    ngx_log(ERR, "prometheus: can not log metrics because of an initialization "
-            .. "error, please make sure that you've declared "
-            .. "'prometheus_metrics' shared dict in your nginx template")
+    kong.log.err("prometheus: can not log metrics because of an initialization "
+                 .. "error, please make sure that you've declared "
+                 .. "'prometheus_metrics' shared dict in your nginx template")
     return
   end
 
@@ -87,16 +81,16 @@ end
 
 local function collect()
   if not prometheus or not metrics then
-    ngx_log(ERR, "prometheus: plugin is not initialized, please make sure ",
-            " 'prometheus_metrics' shared dict is present in nginx template")
-    return responses.send_HTTP_INTERNAL_SERVER_ERROR()
+    kong.log.err("prometheus: plugin is not initialized, please make sure ",
+                 " 'prometheus_metrics' shared dict is present in nginx template")
+    return kong.response.exit(500)
   end
 
   local r = ngx.location.capture "/nginx_status"
 
   if r.status ~= 200 then
-    ngx_log(WARN, "prometheus: failed to retrieve /nginx_status ",
-            "while processing /metrics endpoint")
+    kong.log.warn("prometheus: failed to retrieve /nginx_status ",
+                  "while processing /metrics endpoint")
 
   else
     local accepted, handled, total = select(3, find(r.body,
@@ -112,19 +106,18 @@ local function collect()
   metrics.connections:set(ngx.var.connections_waiting, { "waiting" })
 
   -- db reachable?
-  local dao = singletons.dao
-  local ok, err = dao.db:reachable()
+  local ok, err = kong.db.connector:connect()
   if ok then
     metrics.db_reachable:set(1)
 
   else
     metrics.db_reachable:set(0)
-    ngx_log(ERR, "prometheus: failed to reach database while processing",
-            "/metrics endpoint: ", err)
+    kong.log.err("prometheus: failed to reach database while processing",
+                 "/metrics endpoint: ", err)
   end
 
   prometheus:collect()
-  return ngx.exit(200)
+  return kong.response.exit(200)
 end
 
 
